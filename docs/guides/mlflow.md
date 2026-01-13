@@ -4,14 +4,6 @@
 
 MLFlow is an open-source platform for managing the machine learning lifecycle, including experiment tracking, model versioning, and deployment. NeMo Automodel integrates with MLFlow to automatically log training metrics, parameters, and artifacts during model training.
 
-With MLFlow integration, you can:
-- Track and compare experiments across multiple runs
-- Log hyperparameters and training configurations
-- Monitor training and validation metrics in real-time
-- Store model checkpoints and artifacts
-- Visualize experiment results through the MLFlow UI
-- Share results with team members
-
 ## Prerequisites
 
 Before using MLFlow logging in NeMo Automodel, ensure you have:
