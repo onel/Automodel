@@ -10,13 +10,13 @@ NeMo Automodel provides an end-to-end recipe to run LLM pretraining with Hugging
 
 ## Model and Dataset Context
 
-In this guide, we pretrain OpenAI’s `GPT2-124M` model on a FineWeb-Edu subset of 10 billion tokens.
+In this guide, we pretrain OpenAI's `GPT2-124M` model on a FineWeb-Edu subset of 10 billion tokens.
 
 ### About the FineWeb-Edu Dataset
 
 [FineWeb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) is a dataset consisting of 1.3T tokens of educational web pages filtered from the larger [FineWeb](https://huggingface.co/datasets/HuggingFaceFW/fineweb) dataset. The educational web pages were filtered from the main dataset using a fine-tuned [Bert](https://huggingface.co/docs/transformers/en/model_doc/bert)-like classifier. Further reading on the filtering process can be found [here](https://huggingface.co/spaces/HuggingFaceFW/blogpost-fineweb-v1).
 
-Here’s a glimpse of what the data looks like:
+Here's a glimpse of what the data looks like:
 ```json
 {
     "id": "<urn:uuid:673b1bf6-2c30-40ae-992b-c387d00a836a>",
@@ -748,3 +748,97 @@ As training progresses, you should observe the model loss beginning to converge.
 
 Example of GPT2 training convergence on FineWeb-Edu-10B.
 :::
+
+## Deploy the Pretrained Model
+
+After completing pretraining, you can deploy your model for inference or share it with the community.
+
+### Load the Checkpoint for Inference
+
+You can use the pretrained checkpoint with Hugging Face's Transformers library for inference. The checkpoints saved during training are fully compatible with the Hugging Face ecosystem.
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# Load the pretrained checkpoint
+checkpoint_path = "checkpoints/epoch_0_step_1000/model/"
+tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
+model = AutoModelForCausalLM.from_pretrained(checkpoint_path)
+
+# Move model to GPU if available
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model.to(device)
+
+# Generate text
+input_text = "The future of artificial intelligence"
+inputs = tokenizer(input_text, return_tensors="pt").to(device)
+output = model.generate(**inputs, max_length=50)
+
+# Decode and print the output
+print(tokenizer.decode(output[0], skip_special_tokens=True))
+```
+
+### Export to vLLM
+
+[vLLM](https://github.com/vllm-project/vllm) is an efficient inference engine for production deployment of large language models. It optimizes throughput and memory usage through techniques like continuous batching and PagedAttention.
+
+:::{note}
+Make sure vLLM is installed before proceeding: `pip install vllm`
+:::
+
+```python
+from vllm import LLM, SamplingParams
+
+# Load the pretrained checkpoint with vLLM
+checkpoint_path = "checkpoints/epoch_0_step_1000/model/"
+llm = LLM(model=checkpoint_path, model_impl="transformers")
+
+# Configure sampling parameters
+params = SamplingParams(max_tokens=50, temperature=0.8)
+
+# Generate text
+prompts = ["The future of artificial intelligence"]
+outputs = llm.generate(prompts, sampling_params=params)
+
+# Print the generated text
+for output in outputs:
+    print(f"Generated text: {output.outputs[0].text}")
+```
+
+### Publish to Hugging Face Hub
+
+Share your pretrained model with the community by uploading it to the Hugging Face Model Hub. This makes your model accessible for others to use and build upon.
+
+1. Install the Hugging Face Hub library:
+
+```bash
+pip install huggingface_hub
+```
+
+2. Log in to Hugging Face:
+
+```bash
+huggingface-cli login
+```
+
+3. Upload the checkpoint using the Python API:
+
+```python
+from huggingface_hub import HfApi
+
+api = HfApi()
+api.upload_folder(
+    folder_path="checkpoints/epoch_0_step_1000/model/",
+    repo_id="your-username/gpt2-pretrained-fineweb",
+    repo_type="model"
+)
+```
+
+Once uploaded, your model can be loaded directly:
+
+```python
+from transformers import AutoModelForCausalLM
+
+model = AutoModelForCausalLM.from_pretrained("your-username/gpt2-pretrained-fineweb")
+```
