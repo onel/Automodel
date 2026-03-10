@@ -177,15 +177,181 @@ logged to **WandB** when the corresponding section is enabled.
 
 ---
 
-## 5. Checkpoints & Inference
+## 5. Deploy the Distilled Student Model
 
-- Checkpoints are written under the directory configured in the `checkpoint.checkpoint_dir` field at every `ckpt_every_steps`.
-- The final student model is saved according to the `checkpoint` section (e.g., `model_save_format: safetensors`, consolidated weights if `save_consolidated: true`).
+After completing knowledge distillation training, you can deploy your distilled student model for inference or share it with the community. The distilled model is typically smaller and faster than the teacher while maintaining good performance.
 
-Load the distilled model:
+### Load the Checkpoint for Inference
+
+Checkpoints are written under the directory configured in the `checkpoint.checkpoint_dir` field at every `ckpt_every_steps`. The student model is saved according to the `checkpoint` section settings.
+
+#### For Full Model (SFT)
+
+If you trained the full student model without PEFT, load it directly:
 
 ```python
-import nemo_automodel as am
-student = am.NeMoAutoModelForCausalLM.from_pretrained("checkpoints/final")
-print(student("Translate to French: I love coding!").text)
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# Load the distilled student checkpoint
+checkpoint_path = "checkpoints/epoch_0_step_200/model/consolidated"
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
+model = AutoModelForCausalLM.from_pretrained(checkpoint_path)
+
+# Move model to GPU if available
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model.to(device)
+
+# Generate text
+input_text = "Translate to French: I love coding!"
+inputs = tokenizer(input_text, return_tensors="pt").to(device)
+output = model.generate(**inputs, max_length=100)
+
+# Decode and print the output
+print(tokenizer.decode(output[0], skip_special_tokens=True))
+```
+
+#### For PEFT Adapters
+
+If you used LoRA or other PEFT methods, load both the base model and the adapter:
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
+
+# Load base model and tokenizer
+base_model_name = "meta-llama/Llama-3.2-1B"
+tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+model = AutoModelForCausalLM.from_pretrained(base_model_name)
+
+# Load PEFT adapter
+adapter_path = "checkpoints/epoch_0_step_200/model/"
+model = PeftModel.from_pretrained(model, adapter_path)
+
+# Move model to GPU if available
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model.to(device)
+
+# Generate text
+input_text = "Translate to French: I love coding!"
+inputs = tokenizer(input_text, return_tensors="pt").to(device)
+output = model.generate(**inputs, max_length=100)
+
+# Decode and print the output
+print(tokenizer.decode(output[0], skip_special_tokens=True))
+```
+
+### Export to vLLM
+
+[vLLM](https://github.com/vllm-project/vllm) is an efficient inference engine for production deployment. The distilled student model's smaller size makes it particularly well-suited for high-throughput inference with vLLM.
+
+:::{note}
+Make sure vLLM is installed before proceeding: `pip install vllm`
+:::
+
+#### For Full Model
+
+```python
+from vllm import LLM, SamplingParams
+
+# Load the distilled student checkpoint with vLLM
+checkpoint_path = "checkpoints/epoch_0_step_200/model/consolidated/"
+llm = LLM(model=checkpoint_path, model_impl="transformers")
+
+# Configure sampling parameters
+params = SamplingParams(max_tokens=100, temperature=0.8)
+
+# Generate text
+prompts = ["Translate to French: I love coding!"]
+outputs = llm.generate(prompts, sampling_params=params)
+
+# Print the generated text
+for output in outputs:
+    print(f"Generated text: {output.outputs[0].text}")
+```
+
+#### For PEFT Adapters
+
+If you trained with PEFT, you can export the adapter for use with vLLM:
+
+```python
+from nemo.export.vllm_hf_exporter import vLLMHFExporter
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', required=True, type=str, help="Local path of the base model")
+    parser.add_argument('--lora-model', required=True, type=str, help="Local path of the lora model")
+    args = parser.parse_args()
+
+    lora_model_name = "distilled_student_lora"
+
+    exporter = vLLMHFExporter()
+    exporter.export(model=args.model, enable_lora=True)
+    exporter.add_lora_models(lora_model_name=lora_model_name, lora_model=args.lora_model)
+
+    print("vLLM Output: ", exporter.forward(input_texts=["How are you doing?"], lora_model_name=lora_model_name))
+```
+
+### Publish to Hugging Face Hub
+
+Share your distilled student model with the community by uploading it to the Hugging Face Model Hub.
+
+1. Install the Hugging Face Hub library:
+
+```bash
+pip install huggingface_hub
+```
+
+2. Log in to Hugging Face:
+
+```bash
+huggingface-cli login
+```
+
+3. Upload the checkpoint:
+
+#### For Full Model
+
+```python
+from huggingface_hub import HfApi
+
+api = HfApi()
+api.upload_folder(
+    folder_path="checkpoints/epoch_0_step_200/model/consolidated",
+    repo_id="your-username/llama3.2-1b-distilled",
+    repo_type="model"
+)
+```
+
+#### For PEFT Adapters
+
+```python
+from huggingface_hub import HfApi
+
+api = HfApi()
+api.upload_folder(
+    folder_path="checkpoints/epoch_0_step_200/model/",
+    repo_id="your-username/llama3.2-1b-distilled-adapter",
+    repo_type="model"
+)
+```
+
+Once uploaded, the full model can be loaded directly:
+
+```python
+from transformers import AutoModelForCausalLM
+
+model = AutoModelForCausalLM.from_pretrained("your-username/llama3.2-1b-distilled")
+```
+
+And the PEFT adapter can be loaded with:
+
+```python
+from peft import PeftModel, AutoModelForCausalLM
+
+base_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B")
+model = PeftModel.from_pretrained(base_model, "your-username/llama3.2-1b-distilled-adapter")
 ```
